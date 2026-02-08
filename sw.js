@@ -1,42 +1,104 @@
-const CACHE_NAME = "contabils-pwa-v1";
+/* =========================
+   Contabils PWA - sw.js
+   ========================= */
 
-const ASSETS = [
+const VERSION = "V1.2"; // 🔁 TROQUE ISSO A CADA DEPLOY
+const CACHE_NAME = `contabils-cache-${VERSION}`;
+
+const APP_SHELL = [
   "/",
   "/index.html",
   "/styles.css",
   "/app.js",
+  "/login.html",
   "/manifest.webmanifest",
   "/icon-192.png",
-  "/icon-512.png"
+  "/icon-512.png",
 ];
 
-// instala e faz cache do básico
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
+    (async () => {
+      const cache = await caches.open(CACHE_NAME);
+      await cache.addAll(APP_SHELL);
+      // ⚠️ NÃO chamar skipWaiting aqui (pra aparecer o banner)
+    })()
   );
-  self.skipWaiting();
 });
 
-// ativa e limpa caches antigos
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.map((k) => (k !== CACHE_NAME ? caches.delete(k) : null)))
-    )
+    (async () => {
+      const keys = await caches.keys();
+      await Promise.all(
+        keys
+          .filter((k) => k.startsWith("contabils-cache-") && k !== CACHE_NAME)
+          .map((k) => caches.delete(k))
+      );
+      await self.clients.claim();
+    })()
   );
-  self.clients.claim();
 });
 
-// cache-first só para arquivos estáticos (não cacheia API)
-self.addEventListener("fetch", (event) => {
-  const url = new URL(event.request.url);
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
 
-  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/export.xlsx")) {
-    return; // deixa ir direto no servidor
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+  const url = new URL(req.url);
+
+  // Não intercepta API nem export
+  if (url.pathname.startsWith("/api/") || url.pathname.endsWith(".xlsx")) {
+    return;
   }
 
+  const isHTML =
+    req.mode === "navigate" ||
+    (req.headers.get("accept") || "").includes("text/html");
+
+  // ✅ HTML: network-first (cacheia a navegação atual + /index.html)
+  if (isHTML) {
+    event.respondWith(
+      (async () => {
+        const cache = await caches.open(CACHE_NAME);
+
+        try {
+          const fresh = await fetch(req);
+
+          // cacheia a request atual (ex: "/", "/index.html", "/login.html")
+          cache.put(req, fresh.clone());
+
+          // garante também o index.html (melhor fallback offline)
+          if (url.pathname === "/" || url.pathname.endsWith(".html")) {
+            // se for HTML, tenta manter o index atualizado também
+            cache.put("/index.html", fresh.clone());
+          }
+
+          return fresh;
+        } catch {
+          // fallback offline: tenta o cache da request, senão index.html
+          return (await cache.match(req)) || (await cache.match("/index.html"));
+        }
+      })()
+    );
+    return;
+  }
+
+  // Assets: cache-first
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    (async () => {
+      const cache = await caches.open(CACHE_NAME);
+      const cached = await cache.match(req);
+      if (cached) return cached;
+
+      const fresh = await fetch(req);
+      if (req.method === "GET" && fresh?.ok) {
+        cache.put(req, fresh.clone());
+      }
+      return fresh;
+    })()
   );
 });
