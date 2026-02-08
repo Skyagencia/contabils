@@ -184,3 +184,15 @@ exportBtn.addEventListener("click", () => {
   const url = `/export.xlsx?month=${encodeURIComponent(month)}&category=${encodeURIComponent(cat)}`;
   window.location.href = url; // baixa o arquivo
 });
+
+// ===== PWA: registra o Service Worker =====
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", async () => {
+    try {
+      await navigator.serviceWorker.register("/sw.js");
+      console.log("✅ Contabils PWA: Service Worker registrado");
+    } catch (e) {
+      console.warn("⚠️ Contabils PWA: falha ao registrar Service Worker", e);
+    }
+  });
+}
